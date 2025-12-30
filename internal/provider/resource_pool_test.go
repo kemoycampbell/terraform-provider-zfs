@@ -65,8 +65,8 @@ func mockZfsGetPoolNameByGuid(config *Config, guid string) (*string, error) {
 	return &name, nil
 }
 
-// TestAccResourcePool_DefaultsToDefinedWhenUnset tests that property_mode defaults to "defined" when not supplied
-func TestAccResourcePool_DefaultsToDefinedWhenUnset(t *testing.T) {
+// setupMockZfs is a helper function to set up mock ZFS functions and return a cleanup function
+func setupMockZfs(t *testing.T) {
 	t.Helper()
 
 	// Save original functions
@@ -91,6 +91,12 @@ func TestAccResourcePool_DefaultsToDefinedWhenUnset(t *testing.T) {
 		zfsRenamePool = origRename
 		zfsGetPoolNameByGuid = origGetName
 	})
+}
+
+// TestAccResourcePool_DefaultsToDefinedWhenUnset tests that property_mode defaults to "defined" when not supplied
+func TestAccResourcePool_DefaultsToDefinedWhenUnset(t *testing.T) {
+	t.Helper()
+	setupMockZfs(t)
 
 	resource.UnitTest(t, resource.TestCase{
 		ProviderFactories: providerFactories,
@@ -109,29 +115,7 @@ func TestAccResourcePool_DefaultsToDefinedWhenUnset(t *testing.T) {
 // TestAccResourcePool_Basic tests basic pool creation
 func TestAccResourcePool_Basic(t *testing.T) {
 	t.Helper()
-
-	// Save original functions
-	origDescribe := zfsDescribePool
-	origCreate := zfsCreatePool
-	origDestroy := zfsDestroyPool
-	origRename := zfsRenamePool
-	origGetName := zfsGetPoolNameByGuid
-
-	// Set mock functions
-	zfsDescribePool = mockZfsDescribePool
-	zfsCreatePool = mockZfsCreatePool
-	zfsDestroyPool = mockZfsDestroyPool
-	zfsRenamePool = mockZfsRenamePool
-	zfsGetPoolNameByGuid = mockZfsGetPoolNameByGuid
-
-	// Restore original functions after test
-	t.Cleanup(func() {
-		zfsDescribePool = origDescribe
-		zfsCreatePool = origCreate
-		zfsDestroyPool = origDestroy
-		zfsRenamePool = origRename
-		zfsGetPoolNameByGuid = origGetName
-	})
+	setupMockZfs(t)
 
 	resource.UnitTest(t, resource.TestCase{
 		ProviderFactories: providerFactories,
@@ -420,4 +404,3 @@ func TestGetPropertyNames(t *testing.T) {
 	assert.Contains(t, names, "compression")
 	assert.Contains(t, names, "atime")
 }
-
