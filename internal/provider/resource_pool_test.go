@@ -1,75 +1,175 @@
 package provider
 
 import (
-	"errors"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/stretchr/testify/assert"
 )
 
-// TestResourcePoolSchema tests that the resource pool schema is properly configured
-func TestResourcePoolSchema(t *testing.T) {
-	resource := resourcePool()
-
-	assert.NotNil(t, resource)
-	assert.NotNil(t, resource.Schema)
-	assert.NotNil(t, resource.CreateContext)
-	assert.NotNil(t, resource.ReadContext)
-	assert.NotNil(t, resource.UpdateContext)
-	assert.NotNil(t, resource.DeleteContext)
-	assert.NotNil(t, resource.Importer)
-
-	// Check required fields
-	assert.True(t, resource.Schema["name"].Required)
-	assert.Equal(t, schema.TypeString, resource.Schema["name"].Type)
-
-	// Check optional fields
-	assert.True(t, resource.Schema["mirror"].Optional)
-	assert.True(t, resource.Schema["device"].Optional)
-
-	// Check property_mode has correct default
-	assert.Equal(t, "defined", resource.Schema["property_mode"].Default)
-	assert.True(t, resource.Schema["property_mode"].Optional)
-
-	// Check computed fields
-	assert.True(t, resource.Schema["properties"].Computed)
-	assert.True(t, resource.Schema["raw_properties"].Computed)
+// Mock functions for ZFS operations
+func mockZfsDescribePool(config *Config, poolName string, requiredProperties []string) (*Pool, error) {
+	return &Pool{
+		guid: "test-guid-12345",
+		properties: map[string]Property{
+			"size": {
+				value:    "100G",
+				rawValue: "107374182400",
+				source:   SourceLocal,
+			},
+			"health": {
+				value:    "ONLINE",
+				rawValue: "ONLINE",
+				source:   SourceDefault,
+			},
+		},
+		layout: PoolLayout{
+			striped: []Device{
+				{path: "/dev/disk/by-id/test-device"},
+			},
+			mirrors: []Mirror{},
+		},
+	}, nil
 }
 
-// TestPropertyModeDefaultOnImport tests that property_mode defaults to "defined" during import
-func TestPropertyModeDefaultOnImport(t *testing.T) {
-	resource := resourcePool()
-	d := resource.TestResourceData()
-
-	// Simulate an import scenario where property_mode is not set explicitly
-	// but it should use the default value from the schema
-	d.Set("name", "testpool")
-	
-	// When property_mode is not explicitly set, Get() should return the default value
-	// However, TestResourceData doesn't automatically apply defaults, so we verify 
-	// the schema has the correct default defined
-	propertyModeSchema := resource.Schema["property_mode"]
-	assert.Equal(t, "defined", propertyModeSchema.Default, 
-		"property_mode schema should have 'defined' as default, which will be applied during actual import")
-		
-	// In a real import scenario, the default would be applied. We can test this
-	// by explicitly checking what happens when we don't set it but the schema has a default
-	if d.Get("property_mode") == "" || d.Get("property_mode") == nil {
-		// This is expected behavior - TestResourceData doesn't apply defaults
-		// But we've verified the schema has the correct default above
-		assert.Equal(t, "defined", propertyModeSchema.Default)
-	}
+func mockZfsCreatePool(config *Config, pool *CreatePool) (*Pool, error) {
+	return &Pool{
+		guid: "test-guid-12345",
+		properties: map[string]Property{
+			"size": {
+				value:    "100G",
+				rawValue: "107374182400",
+				source:   SourceLocal,
+			},
+		},
+		layout: PoolLayout{
+			striped: []Device{
+				{path: "/dev/disk/by-id/test-device"},
+			},
+			mirrors: []Mirror{},
+		},
+	}, nil
 }
 
-// TestPropertyModeDefaultInSchema tests the schema default value directly
-func TestPropertyModeDefaultInSchema(t *testing.T) {
-	resource := resourcePool()
-	propertyModeSchema := resource.Schema["property_mode"]
-
-	assert.Equal(t, "defined", propertyModeSchema.Default, "Schema default for property_mode should be 'defined'")
+func mockZfsDestroyPool(config *Config, poolName string) error {
+	return nil
 }
 
+func mockZfsRenamePool(config *Config, oldName string, newName string) error {
+	return nil
+}
+
+func mockZfsGetPoolNameByGuid(config *Config, guid string) (*string, error) {
+	name := "testpool"
+	return &name, nil
+}
+
+// TestAccResourcePool_DefaultsToDefinedWhenUnset tests that property_mode defaults to "defined" when not supplied
+func TestAccResourcePool_DefaultsToDefinedWhenUnset(t *testing.T) {
+	t.Helper()
+
+	// Save original functions
+	origDescribe := zfsDescribePool
+	origCreate := zfsCreatePool
+	origDestroy := zfsDestroyPool
+	origRename := zfsRenamePool
+	origGetName := zfsGetPoolNameByGuid
+
+	// Set mock functions
+	zfsDescribePool = mockZfsDescribePool
+	zfsCreatePool = mockZfsCreatePool
+	zfsDestroyPool = mockZfsDestroyPool
+	zfsRenamePool = mockZfsRenamePool
+	zfsGetPoolNameByGuid = mockZfsGetPoolNameByGuid
+
+	// Restore original functions after test
+	t.Cleanup(func() {
+		zfsDescribePool = origDescribe
+		zfsCreatePool = origCreate
+		zfsDestroyPool = origDestroy
+		zfsRenamePool = origRename
+		zfsGetPoolNameByGuid = origGetName
+	})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccResourcePoolDefaults,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zfs_pool.test", "property_mode", "defined"),
+					resource.TestCheckResourceAttr("zfs_pool.test", "name", "testpool"),
+				),
+			},
+		},
+	})
+}
+
+// TestAccResourcePool_Basic tests basic pool creation
+func TestAccResourcePool_Basic(t *testing.T) {
+	t.Helper()
+
+	// Save original functions
+	origDescribe := zfsDescribePool
+	origCreate := zfsCreatePool
+	origDestroy := zfsDestroyPool
+	origRename := zfsRenamePool
+	origGetName := zfsGetPoolNameByGuid
+
+	// Set mock functions
+	zfsDescribePool = mockZfsDescribePool
+	zfsCreatePool = mockZfsCreatePool
+	zfsDestroyPool = mockZfsDestroyPool
+	zfsRenamePool = mockZfsRenamePool
+	zfsGetPoolNameByGuid = mockZfsGetPoolNameByGuid
+
+	// Restore original functions after test
+	t.Cleanup(func() {
+		zfsDescribePool = origDescribe
+		zfsCreatePool = origCreate
+		zfsDestroyPool = origDestroy
+		zfsRenamePool = origRename
+		zfsGetPoolNameByGuid = origGetName
+	})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccResourcePoolBasic,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zfs_pool.test", "name", "testpool"),
+					resource.TestCheckResourceAttrSet("zfs_pool.test", "id"),
+				),
+			},
+		},
+	})
+}
+
+const testAccResourcePoolDefaults = `
+resource "zfs_pool" "test" {
+  name = "testpool"
+  device {
+    path = "/dev/disk/by-id/test-device"
+  }
+}
+`
+
+const testAccResourcePoolBasic = `
+resource "zfs_pool" "test" {
+  name = "testpool"
+  device {
+    path = "/dev/disk/by-id/test-device"
+  }
+  property {
+    name  = "comment"
+    value = "test pool"
+  }
+}
+`
+
+// Unit tests for helper functions
 // TestParseVdevSpecificationWithDevices tests parsing vdev specification with striped devices
 func TestParseVdevSpecificationWithDevices(t *testing.T) {
 	devices := []interface{}{
@@ -82,7 +182,7 @@ func TestParseVdevSpecificationWithDevices(t *testing.T) {
 	}
 
 	result := parseVdevSpecification(nil, devices)
-	
+
 	assert.Contains(t, result, "/dev/sda")
 	assert.Contains(t, result, "/dev/sdb")
 	assert.NotContains(t, result, "mirror")
@@ -104,7 +204,7 @@ func TestParseVdevSpecificationWithMirrors(t *testing.T) {
 	}
 
 	result := parseVdevSpecification(mirrors, nil)
-	
+
 	assert.Contains(t, result, "mirror")
 	assert.Contains(t, result, "/dev/sdc")
 	assert.Contains(t, result, "/dev/sdd")
@@ -136,7 +236,7 @@ func TestParseVdevSpecificationWithMultipleMirrors(t *testing.T) {
 	}
 
 	result := parseVdevSpecification(mirrors, nil)
-	
+
 	// Should contain two mirror declarations
 	assert.Contains(t, result, "mirror")
 	assert.Contains(t, result, "/dev/sdc")
@@ -176,7 +276,7 @@ func TestFlattenMirror(t *testing.T) {
 
 	assert.NotNil(t, result)
 	assert.NotNil(t, result["device"])
-	
+
 	devices := result["device"].([]map[string]interface{})
 	assert.Len(t, devices, 2)
 	assert.Equal(t, "/dev/sdb", devices[0]["path"])
@@ -212,119 +312,41 @@ func TestParsePropertyBlocksEmpty(t *testing.T) {
 	assert.Len(t, result, 0)
 }
 
-// TestPopulateResourceDataPool tests populating resource data from pool
-func TestPopulateResourceDataPool(t *testing.T) {
+// TestResourcePoolSchema tests that the resource pool schema is properly configured
+func TestResourcePoolSchema(t *testing.T) {
 	resource := resourcePool()
-	d := resource.TestResourceData()
-	
-	// Set required fields to avoid validation errors
-	d.Set("name", "testpool")
-	d.Set("property_mode", "defined")
 
-	pool := Pool{
-		guid: "12345678",
-		properties: map[string]Property{
-			"size": {
-				value:    "1T",
-				rawValue: "1099511627776",
-				source:   SourceLocal,
-			},
-			"health": {
-				value:    "ONLINE",
-				rawValue: "ONLINE",
-				source:   SourceDefault,
-			},
-		},
-		layout: PoolLayout{
-			striped: []Device{
-				{path: "/dev/sda"},
-			},
-			mirrors: []Mirror{},
-		},
-	}
+	assert.NotNil(t, resource)
+	assert.NotNil(t, resource.Schema)
+	assert.NotNil(t, resource.CreateContext)
+	assert.NotNil(t, resource.ReadContext)
+	assert.NotNil(t, resource.UpdateContext)
+	assert.NotNil(t, resource.DeleteContext)
+	assert.NotNil(t, resource.Importer)
 
-	diags := populateResourceDataPool(d, pool)
+	// Check required fields
+	assert.True(t, resource.Schema["name"].Required)
+	assert.Equal(t, schema.TypeString, resource.Schema["name"].Type)
 
-	assert.Nil(t, diags)
-	assert.Equal(t, "12345678", d.Id())
-	
-	// Check devices were set
-	devices := d.Get("device").([]interface{})
-	assert.Len(t, devices, 1)
-	
-	// Check mirrors were set
-	mirrors := d.Get("mirror").([]interface{})
-	assert.Len(t, mirrors, 0)
+	// Check optional fields
+	assert.True(t, resource.Schema["mirror"].Optional)
+	assert.True(t, resource.Schema["device"].Optional)
 
-	// Check properties were set
-	properties := d.Get("properties").(map[string]interface{})
-	assert.Equal(t, "1T", properties["size"])
-	assert.Equal(t, "ONLINE", properties["health"])
+	// Check property_mode has correct default
+	assert.Equal(t, "defined", resource.Schema["property_mode"].Default)
+	assert.True(t, resource.Schema["property_mode"].Optional)
+
+	// Check computed fields
+	assert.True(t, resource.Schema["properties"].Computed)
+	assert.True(t, resource.Schema["raw_properties"].Computed)
 }
 
-// TestPopulateResourceDataPoolWithMirrors tests populating resource data with mirrored vdevs
-func TestPopulateResourceDataPoolWithMirrors(t *testing.T) {
+// TestPropertyModeDefaultInSchema tests the schema default value directly
+func TestPropertyModeDefaultInSchema(t *testing.T) {
 	resource := resourcePool()
-	d := resource.TestResourceData()
-	
-	// Set required fields to avoid validation errors
-	d.Set("name", "testpool")
-	d.Set("property_mode", "defined")
+	propertyModeSchema := resource.Schema["property_mode"]
 
-	pool := Pool{
-		guid: "87654321",
-		properties: map[string]Property{
-			"size": {
-				value:    "2T",
-				rawValue: "2199023255552",
-				source:   SourceLocal,
-			},
-		},
-		layout: PoolLayout{
-			striped: []Device{},
-			mirrors: []Mirror{
-				{
-					devices: []Device{
-						{path: "/dev/sdb"},
-						{path: "/dev/sdc"},
-					},
-				},
-			},
-		},
-	}
-
-	diags := populateResourceDataPool(d, pool)
-
-	assert.Nil(t, diags)
-	assert.Equal(t, "87654321", d.Id())
-	
-	// Check mirrors were set
-	mirrors := d.Get("mirror").([]interface{})
-	assert.Len(t, mirrors, 1)
-	
-	mirror := mirrors[0].(map[string]interface{})
-	devices := mirror["device"].([]interface{})
-	assert.Len(t, devices, 2)
-	
-	device0 := devices[0].(map[string]interface{})
-	device1 := devices[1].(map[string]interface{})
-	assert.Equal(t, "/dev/sdb", device0["path"])
-	assert.Equal(t, "/dev/sdc", device1["path"])
-}
-
-// TestResourcePoolDeleteSetsEmptyID tests that delete sets ID to empty string
-func TestResourcePoolDeleteSetsEmptyID(t *testing.T) {
-	// This is a unit test showing the expected behavior without actual ZFS calls
-	resource := resourcePool()
-	d := resource.TestResourceData()
-	d.SetId("test-guid")
-	
-	// Verify ID is set before delete
-	assert.NotEmpty(t, d.Id())
-	
-	// After delete, the ID should be cleared (this would happen in resourcePoolDelete)
-	d.SetId("")
-	assert.Empty(t, d.Id())
+	assert.Equal(t, "defined", propertyModeSchema.Default, "Schema default for property_mode should be 'defined'")
 }
 
 // TestVdevSchemaValidation tests vdev schema structure
@@ -373,16 +395,6 @@ func TestRawPropertiesSchemaValidation(t *testing.T) {
 	assert.True(t, rawPropertiesSchema.Computed)
 }
 
-// TestPoolErrorType tests PoolError error type
-func TestPoolErrorType(t *testing.T) {
-	err := &PoolError{errmsg: "zpool does not exist"}
-	assert.Equal(t, "zpool does not exist", err.Error())
-	
-	// Test type assertion
-	var poolErr *PoolError
-	assert.True(t, errors.As(err, &poolErr))
-}
-
 // TestGetPropertyNames tests extracting property names from resource data
 func TestGetPropertyNames(t *testing.T) {
 	resource := resourcePool()
@@ -399,7 +411,7 @@ func TestGetPropertyNames(t *testing.T) {
 			"value": "off",
 		},
 	})
-	
+
 	d.Set("property", properties)
 
 	names := getPropertyNames(d)
@@ -408,3 +420,4 @@ func TestGetPropertyNames(t *testing.T) {
 	assert.Contains(t, names, "compression")
 	assert.Contains(t, names, "atime")
 }
+

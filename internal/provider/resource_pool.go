@@ -92,6 +92,15 @@ var rawPropertiesSchema = schema.Schema{
 	Elem:        schema.TypeString,
 }
 
+// Function variables for ZFS operations (can be mocked in tests)
+var (
+	zfsDescribePool      = describePool
+	zfsCreatePool        = createPool
+	zfsDestroyPool       = destroyPool
+	zfsRenamePool        = renamePool
+	zfsGetPoolNameByGuid = getPoolNameByGuid
+)
+
 func resourcePool() *schema.Resource {
 	return &schema.Resource{
 		// This description is used by the documentation generator and the language server.
@@ -143,7 +152,7 @@ func resourcePoolCreate(ctx context.Context, d *schema.ResourceData, meta interf
 
 	config := meta.(*Config)
 
-	pool, err := describePool(config, poolName, getPropertyNames(d))
+	pool, err := zfsDescribePool(config, poolName, getPropertyNames(d))
 	if pool != nil {
 		log.Printf("[DEBUG] zpool %s already exists!", poolName)
 	}
@@ -171,7 +180,7 @@ func resourcePoolCreate(ctx context.Context, d *schema.ResourceData, meta interf
 
 	properties := parsePropertyBlocks(d.Get("property").(*schema.Set).List())
 
-	pool, err = createPool(config, &CreatePool{
+	pool, err = zfsCreatePool(config, &CreatePool{
 		name:       poolName,
 		vdevs:      vdev_spec,
 		properties: properties,
@@ -196,7 +205,7 @@ func resourcePoolRead(ctx context.Context, d *schema.ResourceData, meta interfac
 	if id := d.Id(); id != "" {
 		// If we have a Resource ID, then use that to lookup the real name
 		// of the zfs resource, in case the name has changed.
-		real_name, err := getPoolNameByGuid(config, id)
+		real_name, err := zfsGetPoolNameByGuid(config, id)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("the zpool %s identified by guid %s could not be found. It was likely deleted on the server outside of terraform", poolName, id))
 		}
@@ -207,7 +216,7 @@ func resourcePoolRead(ctx context.Context, d *schema.ResourceData, meta interfac
 		diag.FromErr(err)
 	}
 
-	pool, err := describePool(config, poolName, getPropertyNames(d))
+	pool, err := zfsDescribePool(config, poolName, getPropertyNames(d))
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -246,19 +255,19 @@ func populateResourceDataPool(d *schema.ResourceData, pool Pool) diag.Diagnostic
 
 func resourcePoolUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	config := meta.(*Config)
-	old_name, err := getPoolNameByGuid(config, d.Id())
+	old_name, err := zfsGetPoolNameByGuid(config, d.Id())
 	if err != nil {
 		return diag.FromErr(err)
 	}
 
 	poolName := d.Get("name").(string)
 	if poolName != *old_name {
-		if err := renamePool(config, *old_name, poolName); err != nil {
+		if err := zfsRenamePool(config, *old_name, poolName); err != nil {
 			return diag.FromErr(err)
 		}
 	}
 
-	pool, err := describePool(config, poolName, getPropertyNames(d))
+	pool, err := zfsDescribePool(config, poolName, getPropertyNames(d))
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -279,7 +288,7 @@ func resourcePoolDelete(ctx context.Context, d *schema.ResourceData, meta interf
 	id := d.Get("id")
 
 	log.Printf("[DEBUG] destroying pool: %s %d", poolName, id)
-	if err := destroyPool(config, poolName); err != nil {
+	if err := zfsDestroyPool(config, poolName); err != nil {
 		return diag.FromErr(err)
 	}
 
